@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TUYA LOCAL HELPERS
+#
+# The Tuya Local integration (HACS) does not give this dehumidifier a
+# separate humidity sensor or low/high-temperature sensors. The package
+# needs all three, so these template entities supply them:
+#
+#   sensor.trailer_dehumidifier_humidity
+#       the humidifier entity's current_humidity attribute
+#   binary_sensor.trailer_dehumidifier_low_temperature
+#       bit 8 of the problem sensor's fault_code
+#   binary_sensor.trailer_dehumidifier_high_temperature
+#       bit 16 of the same fault_code
+#
+# The fault-code bits match the device profile Tuya Local picked for the
+# Wesiop OL09-D031M. Check them against your unit, because a different
+# profile can number its faults differently.
+#
+# Install: copy to /config/packages/ and reload Template entities.
+# ─────────────────────────────────────────────────────────────────────────────
+
+template:
+  - sensor:
+      - name: "Trailer Dehumidifier Humidity"
+        unique_id: trailer_dehumidifier_humidity
+        default_entity_id: sensor.trailer_dehumidifier_humidity
+        device_class: humidity
+        state_class: measurement
+        unit_of_measurement: "%"
+        state: "{{ state_attr('humidifier.trailer_dehumidifier', 'current_humidity') }}"
+  - binary_sensor:
+      - name: "Trailer Dehumidifier Low Temperature"
+        unique_id: trailer_dehumidifier_low_temperature
+        default_entity_id: binary_sensor.trailer_dehumidifier_low_temperature
+        device_class: problem
+        state: >-
+          {{ state_attr('binary_sensor.trailer_dehumidifier_problem', 'fault_code') | int(0) | bitwise_and(8) > 0 }}
+      - name: "Trailer Dehumidifier High Temperature"
+        unique_id: trailer_dehumidifier_high_temperature
+        default_entity_id: binary_sensor.trailer_dehumidifier_high_temperature
+        device_class: problem
+        state: >-
+          {{ state_attr('binary_sensor.trailer_dehumidifier_problem', 'fault_code') | int(0) | bitwise_and(16) > 0 }}

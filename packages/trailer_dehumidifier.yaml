@@ -1,0 +1,1066 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# VERSION: 1.00
+#
+# TRAILER DEHUMIDIFIER
+#
+# Home Assistant package. Install and entity mapping: README.md and
+# docs/entity-map.md in this repository.
+#
+# DEFAULTS: every starting value and tunable constant is in the first block
+# of code below (sensor.trailer_dehum_defaults). Nothing else hard-codes them.
+# Below, a value is written as its variable name in that block followed by
+# its starting value in parentheses, e.g. settle_time (00:03:00).
+#
+# A Wesiop OL09-D031M dehumidifier (humidifier.trailer_dehumidifier, via
+# Tuya Local; see docs/dehumidifier.md) in the trailer. Powered either from
+# the EcoFlow Delta 3 Plus AC port (EcoFlow mode: solar and batteries) or
+# from house current (Grid mode).
+#
+# MODE  (input_select.trailer_dehum_mode — the manual override)
+#   Auto       — the rules below decide
+#   Manual On  — on now, no automatic stopping (alerts still sent). In EcoFlow
+#                mode it only switches the AC port on: no "on" command is sent
+#                to the dehumidifier, which starts in whatever state it was
+#                last left (its own power-on memory).
+#   Off        — off
+#
+# POWER SOURCE  (input_boolean.trailer_dehum_grid_mode — one dashboard switch)
+#   EcoFlow mode (switch off) — dehumidifier plugs into the EcoFlow AC port
+#   (switch.ecoflow_delta_3_plus_ac_ports), which the EcoFlow charges
+#   from the trailer battery. The AC port stays OFF unless needed. Auto
+#   SAMPLES, because the dehumidifier's own sensors are the only trailer
+#   humidity reading and they go offline when the port is off:
+#     1. Every check_hours (3 h) — a dashboard setting — turn the AC port on,
+#        at any time of day.
+#     2. Wait for the dehumidifier to come online. There is no fixed power-up
+#        delay: the script waits until the dehumidifier's humidity reading
+#        appears in Home Assistant (EcoFlow outlet live, unit booted, back on
+#        Wi-Fi and reachable by Tuya Local). It gives up after
+#        online_timeout (00:10:00): AC port off, logged as "did not come
+#        online". Once online it is switched on with its humidistat at the
+#        Stop setting, then left running settle_time (00:03:00) so its fan
+#        draws trailer air across the sensor before the reading is used.
+#     3. Humidity > Start setting, start_humidity (45 %), AND no temperature
+#        lockout AND tank not full AND inside the low-rate window → keep
+#        running; otherwise AC port off (outside the window the check only
+#        records the reading).
+#   A run ends when humidity < Stop setting, stop_humidity (40 %), the
+#   temperature lockout sets, the tank fills, or the low-rate window closes.
+#
+#   LOW-RATE WINDOW — checks run at any time, but Auto starts a run only
+#   inside the window below (weekday nights, all weekend). When it closes,
+#   a run in progress ends and the AC port turns off. When it opens, a check
+#   starts right away. Off and Manual On ignore it.
+#
+#   TEMPERATURE LOCKOUT (input_boolean.trailer_dehum_temp_out_of_range) —
+#   the manual allows 5–35 °C ambient: min_temp_f (41 °F) – max_temp_f
+#   (95 °F), fixed in the defaults block. One rule for both power sources,
+#   using the dehumidifier's own temperature reading:
+#     sets   — outside the range for out_of_range_for (00:02:00): dehumidifier
+#              off (Grid) or run ended / no run started (EcoFlow)
+#     clears — at least range_margin_f (3 °F) inside the range: in Grid mode
+#              held for back_in_range_for (00:10:00), then it turns back on;
+#              in EcoFlow mode at the next check's reading
+#   The dashboard shows "Trailer Temp out of range, (xx°F)." while it is set.
+#
+#   LOW TRAILER BATTERY — the trailer battery continually charges the
+#   EcoFlow, so it is the only battery level that matters. When the Trailer
+#   BMS stays below trailer_low (20 %) — a dashboard setting — for
+#   low_battery_for (00:05:00) with Grid mode off, Mode is set to Off (AC
+#   port off) and the phone gets 'Time to set the trailer "On Grid".' The
+#   same happens when Grid mode is turned off with the battery already below
+#   trailer_low. Turning Grid mode on puts Mode back to what it was (kept in
+#   input_text.trailer_dehum_mode_before_low_battery). Nothing is locked:
+#   choosing a Mode by hand works at any time and clears the remembered Mode.
+#
+#   Grid mode (switch on) — dehumidifier plugs into house current, so it is
+#   always powered. The EcoFlow is left out entirely (AC port off) and
+#   battery levels are ignored. Auto runs it during
+#   the low-rate window on its own humidistat, set to the Stop setting, unless
+#   the temperature lockout is set.
+#
+#   LOW-RATE WINDOW (binary_sensor.trailer_dehum_grid_window), used by both
+#   Grid mode and EcoFlow-mode Auto: Monday to Friday from
+#   window_evening_hour (21) to window_morning_hour (7), all day Saturday and
+#   Sunday — continuous from Friday evening to Monday morning. When the
+#   window closes, everything turns off in Grid mode (dehumidifier and AC
+#   port), Manual On included.
+#
+# ALERTS (notify.mobile_app_your_phone — change to your own notify entity)
+#   - Trailer BMS below trailer_low (20 %) with Grid mode off: Mode set to
+#     Off, message 'Time to set the trailer "On Grid".'
+#   - Dehumidifier tank full (it drains through a hose into the bathtub drain
+#     and on to the gray-water tank, so a full tank means the hose is blocked,
+#     kinked or dislodged), or its own low- or high-temperature shutdown
+#
+# LOCKOUTS ON THE DASHBOARD
+#   The Lockouts card lists every active lockout, or a green "No Lockouts
+#   Active": Mode Off, low trailer battery, temperature lockout, tank full,
+#   the dehumidifier's own too-cold/too-hot stop, humidity above Start while
+#   outside the low-rate window (Auto), and binary_sensor.trailer_dehum_offline
+#   (the last check's dehumidifier did not come online; clears at its next
+#   reading). Outside the window with humidity at or below Start is normal:
+#   "Humidity within set parameters, system will check at 21:00."
+#
+# OTHER AUTOMATIONS
+#   This package controls only the EcoFlow AC port and the dehumidifier. It
+#   does not touch any other EcoFlow automation.
+#
+# RUN TRACKING
+#   sensor.trailer_dehumidifier_drying_rate follows each run: start time and
+#   humidity, minutes, humidity removed, % per hour, and a summary of the last
+#   run of 10+ min (custom_templates/trailer_dehum_run.jinja).
+#
+# LAST KNOWN HUMIDITY
+#   sensor.trailer_last_known_humidity keeps the dehumidifier's last real
+#   humidity reading (and temperature) with the time it was taken, so the
+#   value stays visible while the dehumidifier is unplugged or unpowered.
+#
+# ACTIVITY LOG
+#   sensor.trailer_dehumidifier_activity_log keeps the newest 40 events in its
+#   `entries` attribute (newest first), like the irrigation action log: mode
+#   and power-source changes, every automation decision (the status line),
+#   EcoFlow AC port runs, finished drying runs with their numbers, tank-full
+#   and low-temperature stops, and low-battery switch-offs. Trigger-based
+#   template sensors restore across restarts, so the log survives reboots.
+#
+# FAN SPEED
+#   sensor.dehumidifier_fan_speed turns fan.trailer_dehumidifier into one
+#   word for dashboard cards: Off (fan state off), Low (on, 50 %), High
+#   (on, 100 %). The fan keeps its last percentage while off, so speed alone
+#   can't tell Off apart. Unavailable while the dehumidifier has no power.
+#
+# Dashboard: dashboards/trailer_dehumidifier.yaml.
+# ─────────────────────────────────────────────────────────────────────────────
+
+template:
+  # ═══ DEFAULTS AND CONSTANTS — every starting value and tunable lives here ═══
+  # The rest of this package reads these (templates via state_attr on this
+  # sensor; durations via the YAML anchors). Change a value here and reload
+  # Template Entities, Scripts and Automations. "Reset to Defaults" puts the
+  # dashboard settings back to the starting values below.
+  - sensor:
+      - name: "Trailer Dehumidifier Defaults"
+        unique_id: trailer_dehum_defaults
+        default_entity_id: sensor.trailer_dehum_defaults
+        icon: mdi:tune-variant
+        state: "1.00"
+        attributes:
+          # ── Settings: starting values (dashboard sliders; Reset to Defaults)
+          start_humidity: 45        # % — Auto (EcoFlow) starts a run above this;
+                                    #     never below stop_humidity (tied together)
+          stop_humidity: 40         # % — runs end below this; also the humidistat target
+          # The manual's operating range. Fixed here, not a dashboard setting:
+          # the dehumidifier protects itself; these only keep the automation
+          # from spending battery on checks or runs outside it.
+          min_temp_f: &manual_min_f 41   # °F — manual: 5 °C minimum ambient
+          max_temp_f: &manual_max_f 95   # °F — manual: 35 °C maximum ambient
+          check_hours: 3            # h — EcoFlow-mode sampling interval
+          trailer_low: 20           # % — trailer battery level that sets Mode to Off
+                                    #     and sends the "On Grid" message
+          # ── Low-rate window: weekdays evening_hour → morning_hour, weekends all day
+          window_evening_hour: 21
+          window_morning_hour: 7
+          # ── Temperature lockout hysteresis (both modes)
+          range_margin_f: 3         # °F inside the range before it turns back on
+          out_of_range_for: &out_of_range_for "00:02:00"
+          back_in_range_for: &back_in_range_for "00:10:00"
+          # ── EcoFlow sampling
+          online_timeout: &online_timeout "00:10:00"   # wait for the dehumidifier to report
+          settle_time: &settle_time "00:03:00"         # fan runs before the reading counts
+          # ── Trailer battery must stay below trailer_low this long
+          low_battery_for: &low_battery_for "00:05:00"
+          # ── Tracking and log
+          run_min_minutes: 10       # shorter runs get no rate and no summary
+          log_length: 40            # activity-log entries kept
+          # Fixed (cannot be read from here): the scheduled check runs on a
+          # 15-minute time_pattern; fan "High" = percentage 100 (device).
+
+  # ── Fan speed as one word ────────────────────────────────────────────────
+  - sensor:
+      - name: "Dehumidifier Fan Speed"
+        unique_id: trailer_dehum_fan_speed
+        icon: >-
+          {{ {'Off': 'mdi:fan-off', 'Low': 'mdi:fan-speed-1', 'High': 'mdi:fan-speed-2'}.get(this.state, 'mdi:fan-alert') }}
+        state: >-
+          {% if is_state('fan.trailer_dehumidifier', 'on') %}
+            {{ 'High' if state_attr('fan.trailer_dehumidifier', 'percentage') | int(0) >= 100 else 'Low' }}
+          {% elif is_state('fan.trailer_dehumidifier', 'off') %}Off
+          {% else %}{{ none }}{% endif %}
+        availability: "{{ states('fan.trailer_dehumidifier') not in ['unavailable', 'unknown'] }}"
+
+  # ── Low-rate window: weekdays window_evening_hour → window_morning_hour,
+  #    weekends all day. Auto runs only inside it, in both modes. ──────────
+  - binary_sensor:
+      - name: "Trailer Dehumidifier Low-Rate Window"
+        unique_id: trailer_dehum_grid_window
+        default_entity_id: binary_sensor.trailer_dehum_grid_window
+        icon: mdi:clock-time-nine-outline
+        state: >-
+          {{ now().weekday() >= 5
+             or now().hour >= state_attr('sensor.trailer_dehum_defaults', 'window_evening_hour') | int(21)
+             or now().hour < state_attr('sensor.trailer_dehum_defaults', 'window_morning_hour') | int(7) }}
+
+  # ── Dehumidifier did not come online (dashboard lockout) ────────────────
+  # On when a check logs "did not come online"; off at the next real
+  # humidity reading.
+  - triggers:
+      - trigger: state
+        entity_id: input_text.trailer_dehum_status
+        id: status
+      - trigger: state
+        entity_id: sensor.trailer_dehumidifier_humidity
+        not_to:
+          - unavailable
+          - unknown
+        id: online
+    binary_sensor:
+      - name: "Trailer Dehumidifier Offline"
+        unique_id: trailer_dehum_offline
+        default_entity_id: binary_sensor.trailer_dehum_offline
+        device_class: problem
+        state: >-
+          {% if trigger.id == 'online' %}{{ false }}
+          {% else %}{{ 'did not come online' in trigger.to_state.state or this.state == 'on' }}{% endif %}
+
+  # ── Last known humidity ──────────────────────────────────────────────────
+  - triggers:
+      - trigger: state
+        entity_id: sensor.trailer_dehumidifier_humidity
+        not_to:
+          - unavailable
+          - unknown
+    # Only real readings (an entity rename or removal sends an empty state).
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.to_state is not none and trigger.to_state.state | is_number }}"
+    sensor:
+      - name: "Trailer Last Known Humidity"
+        unique_id: trailer_last_known_humidity
+        unit_of_measurement: "%"
+        device_class: humidity
+        state_class: measurement
+        state: "{{ trigger.to_state.state }}"
+        attributes:
+          measured_at: "{{ now().isoformat() }}"
+          temperature: "{{ states('sensor.trailer_dehumidifier_temperature') }}"
+
+  # ── Activity log ─────────────────────────────────────────────────────────
+  - triggers:
+      - trigger: state
+        entity_id: input_select.trailer_dehum_mode
+        id: mode
+      - trigger: state
+        entity_id: input_boolean.trailer_dehum_grid_mode
+        to:
+          - "on"
+          - "off"
+        id: grid
+      - trigger: state
+        entity_id: input_text.trailer_dehum_status
+        id: status
+      - trigger: state
+        entity_id: switch.ecoflow_delta_3_plus_ac_ports
+        from: "on"
+        to: "off"
+        id: ac_off
+      - trigger: state
+        entity_id: sensor.trailer_dehumidifier_drying_rate
+        attribute: last_run
+        id: run
+      - trigger: state
+        entity_id: binary_sensor.trailer_dehumidifier_tank
+        to: "on"
+        id: tank
+      - trigger: state
+        entity_id: binary_sensor.trailer_dehumidifier_low_temperature
+        to: "on"
+        id: cold
+      - trigger: state
+        entity_id: binary_sensor.trailer_dehumidifier_high_temperature
+        to: "on"
+        id: hot
+    sensor:
+      - name: "Trailer Dehumidifier Activity Log"
+        unique_id: trailer_dehum_activity_log
+        icon: mdi:clipboard-text-clock
+        state: "{{ now().strftime('%Y-%m-%d %H:%M') }}"
+        attributes:
+          entries: >-
+            {% set prev = this.attributes.get('entries', []) or [] %}
+            {% set t = now().strftime('%b %-d %I:%M %p') ~ '  —  ' %}
+            {% set id = trigger.id %}
+            {% if id == 'mode' %}
+              {% set entry = t ~ '🎛️ Mode: ' ~ trigger.from_state.state ~ ' → ' ~ trigger.to_state.state %}
+            {% elif id == 'grid' %}
+              {% set entry = t ~ ('🔌 Power: Grid' if trigger.to_state.state == 'on' else '🔋 Power: EcoFlow (solar & batteries)') %}
+            {% elif id == 'status' %}
+              {% set msg = trigger.to_state.state %}
+              {% set msg = msg.split(' — ', 1)[1] if ' — ' in msg else msg %}
+              {% set entry = (t ~ '📝 ' ~ msg) if msg not in ['', 'unknown', 'unavailable'] else none %}
+            {% elif id == 'ac_off' %}
+              {% set secs = (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() %}
+              {% set entry = t ~ '⚡ EcoFlow AC port ran ' ~
+                   ((secs / 60) | round(0) | int ~ ' min' if secs >= 90 else secs | round(0) | int ~ ' sec') %}
+            {% elif id == 'run' %}
+              {# A template reload re-creates the sensor and re-sends the same
+                 last_run; only a run that differs from the newest logged one
+                 is new. #}
+              {% set r = trigger.to_state.attributes.get('last_run') if trigger.to_state else none %}
+              {% set r = none if r and (prev | select('search', 'Drying run \\(' ~ r.started ~ '\\)') | list | count > 0) else r %}
+              {% set entry = (t ~ '💧 Drying run (' ~ r.started ~ '): ' ~ r.start_humidity ~ '% → ' ~
+                   r.end_humidity ~ '% in ' ~ r.minutes | int ~ ' min — ' ~ r.rate ~ ' %/h') if r else none %}
+            {% elif id == 'tank' %}
+              {% set entry = t ~ '🪣 Tank full — drain hose blocked or kinked; dehumidifier stopped' %}
+            {% elif id == 'cold' %}
+              {% set entry = t ~ '🥶 Too cold — dehumidifier stopped (' ~ states('sensor.trailer_dehumidifier_temperature') ~ '°F)' %}
+            {% elif id == 'hot' %}
+              {% set entry = t ~ '🥵 Too hot — dehumidifier stopped (' ~ states('sensor.trailer_dehumidifier_temperature') ~ '°F)' %}
+            {% else %}
+              {% set entry = none %}
+            {% endif %}
+            {{ (([entry] if entry else []) + (prev | list))[:state_attr('sensor.trailer_dehum_defaults', 'log_length') | int(40)] }}
+
+  # ── Drying-run tracking ──────────────────────────────────────────────────
+  - triggers:
+      - trigger: state
+        entity_id: humidifier.trailer_dehumidifier
+      - trigger: state
+        entity_id: sensor.trailer_dehumidifier_humidity
+    variables:
+      now_ts: "{{ now().timestamp() | round(0) }}"
+    sensor:
+      - name: "Trailer Dehumidifier Drying Rate"
+        unique_id: trailer_dehum_drying_rate
+        unit_of_measurement: "%/h"
+        state_class: measurement
+        icon: mdi:water-minus
+        # Current run's rate once it is 10+ min old; between runs, the last
+        # run's average rate.
+        state: >-
+          {%- from 'trailer_dehum_run.jinja' import trailer_dehum_run -%}
+          {%- set r = trailer_dehum_run(this.attributes, now_ts, state_attr('sensor.trailer_dehum_defaults', 'run_min_minutes') | int(10)) | from_json -%}
+          {%- if r.rate is not none -%}{{ r.rate }}
+          {%- elif r.last_run -%}{{ r.last_run.rate }}
+          {%- else -%}{{ none }}{%- endif -%}
+        attributes:
+          running: >-
+            {%- from 'trailer_dehum_run.jinja' import trailer_dehum_run -%}
+            {{ (trailer_dehum_run(this.attributes, now_ts, state_attr('sensor.trailer_dehum_defaults', 'run_min_minutes') | int(10)) | from_json).running }}
+          start_ts: >-
+            {%- from 'trailer_dehum_run.jinja' import trailer_dehum_run -%}
+            {{ (trailer_dehum_run(this.attributes, now_ts, state_attr('sensor.trailer_dehum_defaults', 'run_min_minutes') | int(10)) | from_json).start_ts }}
+          start_humidity: >-
+            {%- from 'trailer_dehum_run.jinja' import trailer_dehum_run -%}
+            {{ (trailer_dehum_run(this.attributes, now_ts, state_attr('sensor.trailer_dehum_defaults', 'run_min_minutes') | int(10)) | from_json).start_humidity }}
+          minutes: >-
+            {%- from 'trailer_dehum_run.jinja' import trailer_dehum_run -%}
+            {{ (trailer_dehum_run(this.attributes, now_ts, state_attr('sensor.trailer_dehum_defaults', 'run_min_minutes') | int(10)) | from_json).minutes }}
+          drop: >-
+            {%- from 'trailer_dehum_run.jinja' import trailer_dehum_run -%}
+            {{ (trailer_dehum_run(this.attributes, now_ts, state_attr('sensor.trailer_dehum_defaults', 'run_min_minutes') | int(10)) | from_json).drop }}
+          last_humidity: >-
+            {%- from 'trailer_dehum_run.jinja' import trailer_dehum_run -%}
+            {{ (trailer_dehum_run(this.attributes, now_ts, state_attr('sensor.trailer_dehum_defaults', 'run_min_minutes') | int(10)) | from_json).last_humidity }}
+          last_run: >-
+            {%- from 'trailer_dehum_run.jinja' import trailer_dehum_run -%}
+            {{ (trailer_dehum_run(this.attributes, now_ts, state_attr('sensor.trailer_dehum_defaults', 'run_min_minutes') | int(10)) | from_json).last_run }}
+
+input_select:
+  trailer_dehum_mode:
+    name: Trailer Dehumidifier Mode
+    icon: mdi:air-humidifier
+    options:
+      - "Off"
+      - Auto
+      - Manual On
+
+input_boolean:
+  trailer_dehum_grid_mode:
+    name: Trailer Dehumidifier Grid Mode
+    icon: mdi:transmission-tower
+  # Set by the automation: an EcoFlow-mode Auto run is in progress.
+  trailer_dehum_running:
+    name: Trailer Dehumidifier Running (Auto)
+    icon: mdi:air-humidifier
+  # Temperature lockout: the dehumidifier's reading was outside min_temp_f –
+  # max_temp_f for out_of_range_for. Cleared once back inside by
+  # range_margin_f.
+  trailer_dehum_temp_out_of_range:
+    name: Trailer Dehumidifier Temperature Lockout
+    icon: mdi:thermometer-alert
+
+input_number:
+  trailer_dehum_start_humidity:
+    name: Trailer Dehumidifier Start Humidity
+    min: 40
+    max: 80
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-percent-alert
+  trailer_dehum_stop_humidity:
+    name: Trailer Dehumidifier Stop Humidity
+    min: 30
+    max: 75
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+  trailer_dehum_check_hours:
+    name: Trailer Dehumidifier Check Interval
+    min: 1
+    max: 12
+    step: 1
+    unit_of_measurement: h
+    icon: mdi:timer-sync-outline
+  trailer_dehum_trailer_low:
+    name: Trailer Dehumidifier Trailer Battery Low Level
+    min: 10
+    max: 60
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-low
+
+input_datetime:
+  trailer_dehum_last_check:
+    name: Trailer Dehumidifier Last Check
+    has_date: true
+    has_time: true
+
+input_text:
+  trailer_dehum_status:
+    name: Trailer Dehumidifier Status
+    max: 255
+  # The Mode in use when a low trailer battery set it to Off; put back when
+  # Grid mode is turned on. Empty otherwise.
+  trailer_dehum_mode_before_low_battery:
+    name: Trailer Dehumidifier Mode Before Low Battery
+    max: 20
+
+script:
+  # Put every dashboard setting back to its starting value from the defaults
+  # block at the top of this file.
+  trailer_dehum_reset_defaults:
+    alias: "Trailer Dehumidifier — Reset Settings to Defaults"
+    icon: mdi:restore
+    mode: single
+    sequence:
+      - repeat:
+          for_each:
+            - start_humidity
+            - stop_humidity
+            - check_hours
+            - trailer_low
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: "input_number.trailer_dehum_{{ repeat.item }}"
+              data:
+                value: >-
+                  {{ state_attr('sensor.trailer_dehum_defaults', repeat.item) }}
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.trailer_dehum_status
+        data:
+          value: "{{ now().strftime('%-m/%-d %H:%M') }} — settings reset to defaults"
+
+  # The single policy: puts the AC port and the dehumidifier where the
+  # current mode, power source and time say they belong.
+  # Called on every mode change, power-source change, and when the grid
+  # window opens or closes.
+  trailer_dehum_apply:
+    alias: "Trailer Dehumidifier — Apply Policy"
+    icon: mdi:air-humidifier
+    mode: queued
+    fields:
+      reason:
+        description: "mode | grid | window (low-rate window opened or closed) | temperature (lockout set or cleared)"
+    variables:
+      mode: "{{ states('input_select.trailer_dehum_mode') }}"
+      grid: "{{ is_state('input_boolean.trailer_dehum_grid_mode', 'on') }}"
+      in_window: "{{ is_state('binary_sensor.trailer_dehum_grid_window', 'on') }}"
+      stamp: "{{ now().strftime('%-m/%-d %H:%M') }}"
+    sequence:
+      # Cancel any EcoFlow check still sampling: the decision it was about to
+      # make belongs to the old mode / power source. Every branch below sets
+      # the AC port itself, and EcoFlow Auto starts a fresh check.
+      - action: script.turn_off
+        target:
+          entity_id: script.trailer_dehum_check
+      - choose:
+          # ── Grid mode: EcoFlow out of the picture ──
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.trailer_dehum_grid_mode
+                state: "on"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.trailer_dehum_running
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.ecoflow_delta_3_plus_ac_ports
+              - if:
+                  - condition: template
+                    # The window closing turns everything off, Manual On
+                    # included; a later mode change can turn it back on by hand.
+                    # The temperature lockout keeps it off.
+                    value_template: >-
+                      {{ is_state('input_boolean.trailer_dehum_temp_out_of_range', 'off') and (
+                           (mode == 'Manual On' and not (reason == 'window' and not in_window))
+                           or (mode == 'Auto' and in_window)) }}
+                then:
+                  - action: humidifier.turn_on
+                    target:
+                      entity_id: humidifier.trailer_dehumidifier
+                    continue_on_error: true
+                  - action: humidifier.set_humidity
+                    target:
+                      entity_id: humidifier.trailer_dehumidifier
+                    data:
+                      humidity: "{{ states('input_number.trailer_dehum_stop_humidity') | int(state_attr('sensor.trailer_dehum_defaults', 'stop_humidity')) }}"
+                    continue_on_error: true
+                  - action: input_text.set_value
+                    target:
+                      entity_id: input_text.trailer_dehum_status
+                    data:
+                      value: "{{ stamp }} — Grid: on ({{ mode }}), humidistat {{ states('input_number.trailer_dehum_stop_humidity') | int }}%"
+                else:
+                  - action: humidifier.turn_off
+                    target:
+                      entity_id: humidifier.trailer_dehumidifier
+                    continue_on_error: true
+                  - action: input_text.set_value
+                    target:
+                      entity_id: input_text.trailer_dehum_status
+                    data:
+                      value: >-
+                        {% set t = states('sensor.trailer_dehumidifier_temperature') | float(none) %}{% set lo = state_attr('sensor.trailer_dehum_defaults', 'min_temp_f') | float(41) %}{% set hi = state_attr('sensor.trailer_dehum_defaults', 'max_temp_f') | float(95) %}{{ stamp }} — Grid: off{% if is_state('input_boolean.trailer_dehum_temp_out_of_range', 'on') %} (trailer temp out of range{{ ', ' ~ t ~ '°F' if t is not none }}){% elif mode == 'Auto' %} until the low-rate window opens{% else %} ({{ mode }}){% endif %}
+          # ── EcoFlow mode ──
+          # Auto samples at any time but runs only inside the low-rate
+          # window; Off and Manual On do not follow the window.
+          - conditions:
+              - condition: template
+                value_template: "{{ reason != 'window' or mode == 'Auto' }}"
+            sequence:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ mode == 'Off' }}"
+                    sequence:
+                      - action: input_boolean.turn_off
+                        target:
+                          entity_id: input_boolean.trailer_dehum_running
+                      - action: switch.turn_off
+                        target:
+                          entity_id: switch.ecoflow_delta_3_plus_ac_ports
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.trailer_dehum_status
+                        data:
+                          value: "{{ stamp }} — EcoFlow: Off"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ mode == 'Manual On' }}"
+                    sequence:
+                      - action: input_boolean.turn_off
+                        target:
+                          entity_id: input_boolean.trailer_dehum_running
+                      - action: switch.turn_on
+                        target:
+                          entity_id: switch.ecoflow_delta_3_plus_ac_ports
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.trailer_dehum_status
+                        data:
+                          value: "{{ stamp }} — EcoFlow: Manual On"
+                  # Auto, the low-rate window has just closed: end any run.
+                  # Checks continue on schedule but do not start a run.
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ reason == 'window' and not in_window }}"
+                    sequence:
+                      - action: input_boolean.turn_off
+                        target:
+                          entity_id: input_boolean.trailer_dehum_running
+                      - action: switch.turn_off
+                        target:
+                          entity_id: switch.ecoflow_delta_3_plus_ac_ports
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.trailer_dehum_status
+                        data:
+                          value: >-
+                            {{ stamp }} — EcoFlow: low-rate window closed; checks continue, runs wait until
+                            {{ state_attr('sensor.trailer_dehum_defaults', 'window_evening_hour') }}:00
+                # Auto (mode or power-source change, or the window opening):
+                # sample now. The check only starts a run inside the window.
+                default:
+                  - action: input_boolean.turn_off
+                    target:
+                      entity_id: input_boolean.trailer_dehum_running
+                  - action: switch.turn_off
+                    target:
+                      entity_id: switch.ecoflow_delta_3_plus_ac_ports
+                  - action: script.turn_on
+                    target:
+                      entity_id: script.trailer_dehum_check
+
+  # EcoFlow mode, Auto: one sampling run. Power the dehumidifier from the
+  # EcoFlow, read the trailer air through its own sensors, then keep it
+  # running or switch it back off.
+  trailer_dehum_check:
+    alias: "Trailer Dehumidifier — Check and Run"
+    icon: mdi:air-humidifier
+    mode: single
+    sequence:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.trailer_dehum_last_check
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - action: switch.turn_on
+        target:
+          entity_id: switch.ecoflow_delta_3_plus_ac_ports
+      # The dehumidifier needs power and Wi-Fi before it
+      # reports. If its humidity is already available this passes at once.
+      - wait_template: >-
+          {{ states('sensor.trailer_dehumidifier_humidity') not in ['unavailable', 'unknown'] }}
+        timeout: *online_timeout
+      - if:
+          - condition: template
+            value_template: "{{ not wait.completed }}"
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: switch.ecoflow_delta_3_plus_ac_ports
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.trailer_dehum_status
+            data:
+              value: >-
+                {{ now().strftime('%-m/%-d %H:%M') }} — dehumidifier did not come online within
+                {{ (as_timedelta(state_attr('sensor.trailer_dehum_defaults', 'online_timeout')).total_seconds() / 60) | round(0) | int }}
+                min; AC port off
+          - stop: "Dehumidifier never came online"
+      - action: humidifier.turn_on
+        target:
+          entity_id: humidifier.trailer_dehumidifier
+      - action: humidifier.set_humidity
+        target:
+          entity_id: humidifier.trailer_dehumidifier
+        data:
+          humidity: "{{ states('input_number.trailer_dehum_stop_humidity') | int(state_attr('sensor.trailer_dehum_defaults', 'stop_humidity')) }}"
+      # Let the fan pull trailer air across the sensor before deciding.
+      - delay: *settle_time
+      # A reading at least range_margin_f inside the range clears the
+      # temperature lockout; one outside the range sets it.
+      - variables:
+          t: "{{ states('sensor.trailer_dehumidifier_temperature') | float(none) }}"
+          lo: "{{ state_attr('sensor.trailer_dehum_defaults', 'min_temp_f') | float(41) }}"
+          hi: "{{ state_attr('sensor.trailer_dehum_defaults', 'max_temp_f') | float(95) }}"
+          margin: "{{ state_attr('sensor.trailer_dehum_defaults', 'range_margin_f') | float(3) }}"
+      - if:
+          - condition: template
+            value_template: "{{ t is not none and (t < lo or t > hi) }}"
+        then:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.trailer_dehum_temp_out_of_range
+      - if:
+          - condition: template
+            value_template: >-
+              {{ t is not none and lo + margin <= t <= hi - margin
+                 and is_state('input_boolean.trailer_dehum_temp_out_of_range', 'on') }}
+        then:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.trailer_dehum_temp_out_of_range
+      # Only act if this is still an EcoFlow-mode Auto check.
+      - condition: state
+        entity_id: input_select.trailer_dehum_mode
+        state: Auto
+      - condition: state
+        entity_id: input_boolean.trailer_dehum_grid_mode
+        state: "off"
+      - if:
+          - condition: numeric_state
+            entity_id: sensor.trailer_dehumidifier_humidity
+            above: input_number.trailer_dehum_start_humidity
+          - condition: state
+            entity_id: input_boolean.trailer_dehum_temp_out_of_range
+            state: "off"
+          - condition: state
+            entity_id: binary_sensor.trailer_dehumidifier_tank
+            state: "off"
+          # Runs start only inside the low-rate window; outside it the check
+          # just records the reading.
+          - condition: state
+            entity_id: binary_sensor.trailer_dehum_grid_window
+            state: "on"
+        then:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.trailer_dehum_running
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.trailer_dehum_status
+            data:
+              value: >-
+                {{ now().strftime('%-m/%-d %H:%M') }} — EcoFlow: running,
+                {{ states('sensor.trailer_dehumidifier_humidity') }}% at
+                {{ states('sensor.trailer_dehumidifier_temperature') }}°F, stops at
+                {{ states('input_number.trailer_dehum_stop_humidity') | int }}%
+        else:
+          - action: switch.turn_off
+            target:
+              entity_id: switch.ecoflow_delta_3_plus_ac_ports
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.trailer_dehum_status
+            data:
+              value: >-
+                {{ now().strftime('%-m/%-d %H:%M') }} — EcoFlow: checked,
+                {{ 'not run outside the low-rate window' if is_state('binary_sensor.trailer_dehum_grid_window', 'off') else 'not needed' }},
+                {{ states('sensor.trailer_dehumidifier_humidity') }}% at
+                {{ states('sensor.trailer_dehumidifier_temperature') }}°F
+                (starts above {{ states('input_number.trailer_dehum_start_humidity') | int }}%,
+                range {{ state_attr('sensor.trailer_dehum_defaults', 'min_temp_f') }}–{{ state_attr('sensor.trailer_dehum_defaults', 'max_temp_f') }}°F{{ ', temperature lockout' if is_state('input_boolean.trailer_dehum_temp_out_of_range', 'on') }})
+
+automation:
+  # ── Mode, power source and the low-rate window → one policy ──────────────
+  - id: trailer_dehum_mode_changed
+    alias: "Trailer Dehumidifier — Apply on Mode, Power Source or Low-Rate Window"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: input_select.trailer_dehum_mode
+        id: mode
+      - trigger: state
+        entity_id: input_boolean.trailer_dehum_grid_mode
+        id: grid
+      - trigger: state
+        entity_id: binary_sensor.trailer_dehum_grid_window
+        # Real openings and closings only, not a template reload.
+        not_from:
+          - unavailable
+          - unknown
+        to:
+          - "on"
+          - "off"
+        id: window
+    actions:
+      - action: script.trailer_dehum_apply
+        data:
+          reason: "{{ trigger.id }}"
+
+  # ── Start humidity can never be below Stop humidity ──────────────────────
+  # Move Start below Stop → Stop follows it down. Move Stop above Start →
+  # Start follows it up. Otherwise EcoFlow-mode Auto would start and stop the
+  # dehumidifier on the same check.
+  - id: trailer_dehum_tie_start_stop
+    alias: "Trailer Dehumidifier — Keep Start at or Above Stop"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: input_number.trailer_dehum_start_humidity
+        id: start
+      - trigger: state
+        entity_id: input_number.trailer_dehum_stop_humidity
+        id: stop
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ states('input_number.trailer_dehum_start_humidity') | float(0)
+             < states('input_number.trailer_dehum_stop_humidity') | float(0) }}
+    actions:
+      - if:
+          - condition: trigger
+            id: start
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.trailer_dehum_stop_humidity
+            data:
+              value: "{{ states('input_number.trailer_dehum_start_humidity') }}"
+        else:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.trailer_dehum_start_humidity
+            data:
+              value: "{{ states('input_number.trailer_dehum_stop_humidity') }}"
+
+  # ── EcoFlow mode, Auto: sample on the check interval ─────────────────────
+  - id: trailer_dehum_scheduled_check
+    alias: "Trailer Dehumidifier — Scheduled Check"
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/15"
+    conditions:
+      - condition: state
+        entity_id: input_select.trailer_dehum_mode
+        state: Auto
+      - condition: state
+        entity_id: input_boolean.trailer_dehum_grid_mode
+        state: "off"
+      - condition: state
+        entity_id: input_boolean.trailer_dehum_running
+        state: "off"
+      - condition: state
+        entity_id: script.trailer_dehum_check
+        state: "off"
+      - condition: template
+        value_template: >-
+          {% set last = state_attr('input_datetime.trailer_dehum_last_check', 'timestamp') %}
+          {{ last is none or now().timestamp() - last >= states('input_number.trailer_dehum_check_hours') | float(state_attr('sensor.trailer_dehum_defaults', 'check_hours')) * 3600 }}
+    actions:
+      - action: script.trailer_dehum_check
+
+  # ── EcoFlow mode, Auto: end a run ────────────────────────────────────────
+  - id: trailer_dehum_end_run
+    alias: "Trailer Dehumidifier — End Auto Run"
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.trailer_dehumidifier_humidity
+        below: input_number.trailer_dehum_stop_humidity
+        id: dry
+      - trigger: state
+        entity_id: binary_sensor.trailer_dehumidifier_tank
+        to: "on"
+        id: tank
+      - trigger: state
+        entity_id: input_boolean.trailer_dehum_temp_out_of_range
+        to: "on"
+        id: temp
+    conditions:
+      - condition: state
+        entity_id: input_boolean.trailer_dehum_running
+        state: "on"
+      - condition: state
+        entity_id: input_select.trailer_dehum_mode
+        state: Auto
+      - condition: state
+        entity_id: input_boolean.trailer_dehum_grid_mode
+        state: "off"
+    actions:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.ecoflow_delta_3_plus_ac_ports
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.trailer_dehum_running
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.trailer_dehum_status
+        data:
+          value: >-
+            {{ now().strftime('%-m/%-d %H:%M') }} — EcoFlow: stopped,
+            {{ {'dry': 'humidity down to ' ~ states('sensor.trailer_dehumidifier_humidity') ~ '%',
+                'temp': 'trailer temp out of range (' ~ states('sensor.trailer_dehumidifier_temperature') ~ '°F)',
+                'tank': 'tank full'}[trigger.id] }}
+
+  # ── Temperature lockout (both power sources) ───────────────────────────
+  # Sets when the dehumidifier's temperature is outside min_temp_f –
+  # max_temp_f for out_of_range_for (00:02:00). Clears once it has been at
+  # least range_margin_f (3 °F) inside the range for back_in_range_for
+  # (00:10:00); in EcoFlow mode the unit is unpowered between checks, so the
+  # check script also clears it on a good reading.
+  - id: trailer_dehum_grid_temperature_guard
+    alias: "Trailer Dehumidifier — Temperature Lockout"
+    mode: queued
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.trailer_dehumidifier_temperature
+        below: *manual_min_f
+        for: *out_of_range_for
+        id: out
+      - trigger: numeric_state
+        entity_id: sensor.trailer_dehumidifier_temperature
+        above: *manual_max_f
+        for: *out_of_range_for
+        id: out
+      - trigger: template
+        value_template: >-
+          {% set t = states('sensor.trailer_dehumidifier_temperature') | float(none) %}
+          {{ t is not none
+             and state_attr('sensor.trailer_dehum_defaults', 'min_temp_f') | float(41) + state_attr('sensor.trailer_dehum_defaults', 'range_margin_f') | float(3) <= t
+             and t <= state_attr('sensor.trailer_dehum_defaults', 'max_temp_f') | float(95) - state_attr('sensor.trailer_dehum_defaults', 'range_margin_f') | float(3) }}
+        for: *back_in_range_for
+        id: back
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: out
+              - condition: state
+                entity_id: input_boolean.trailer_dehum_temp_out_of_range
+                state: "off"
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.trailer_dehum_temp_out_of_range
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.trailer_dehum_status
+                data:
+                  value: >-
+                    {{ now().strftime('%-m/%-d %H:%M') }} — trailer temp out of range
+                    ({{ states('sensor.trailer_dehumidifier_temperature') }}°F): dehumidifier off
+              - if:
+                  - condition: state
+                    entity_id: input_boolean.trailer_dehum_grid_mode
+                    state: "on"
+                then:
+                  - action: script.trailer_dehum_apply
+                    data:
+                      reason: temperature
+          - conditions:
+              - condition: trigger
+                id: back
+              - condition: state
+                entity_id: input_boolean.trailer_dehum_temp_out_of_range
+                state: "on"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.trailer_dehum_temp_out_of_range
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.trailer_dehum_status
+                data:
+                  value: >-
+                    {{ now().strftime('%-m/%-d %H:%M') }} — trailer temp back in range
+                    ({{ states('sensor.trailer_dehumidifier_temperature') }}°F)
+              - if:
+                  - condition: state
+                    entity_id: input_boolean.trailer_dehum_grid_mode
+                    state: "on"
+                then:
+                  - action: script.trailer_dehum_apply
+                    data:
+                      reason: temperature
+
+  # ── Trailer battery low: Mode Off, "On Grid" message ──────────────────
+  # Below trailer_low (20 %) for low_battery_for (00:05:00) with Grid mode
+  # off, or already below it when Grid mode is turned off. Remembers the
+  # Mode so turning Grid mode on can put it back.
+  - id: trailer_dehum_batteries_low_alert
+    alias: "Trailer Dehumidifier — Trailer Battery Low: Off and Set On Grid"
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.trailer_bms_battery
+        below: input_number.trailer_dehum_trailer_low
+        for: *low_battery_for
+      - trigger: state
+        entity_id: input_boolean.trailer_dehum_grid_mode
+        from: "on"
+        to: "off"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.trailer_dehum_grid_mode
+        state: "off"
+      - condition: numeric_state
+        entity_id: sensor.trailer_bms_battery
+        below: input_number.trailer_dehum_trailer_low
+    actions:
+      - if:
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: input_select.trailer_dehum_mode
+                state: "Off"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.trailer_dehum_mode_before_low_battery
+            data:
+              value: "{{ states('input_select.trailer_dehum_mode') }}"
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.trailer_dehum_mode
+            data:
+              option: "Off"
+          # Let the Off policy write its own status first.
+          - delay: "00:00:05"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.trailer_dehum_status
+        data:
+          value: >-
+            {{ now().strftime('%-m/%-d %H:%M') }} — trailer battery low
+            ({{ states('sensor.trailer_bms_battery') }}%): Off until Grid mode is turned on
+      - action: notify.send_message
+        target:
+          entity_id: notify.mobile_app_your_phone
+        data:
+          message: 'Time to set the trailer "On Grid".'
+
+  # ── Grid mode turned on after a low battery: put the Mode back ──────────
+  # Choosing Auto or Manual On by hand also clears the remembered Mode.
+  - id: trailer_dehum_restore_mode_on_grid
+    alias: "Trailer Dehumidifier — Restore Mode When Set On Grid"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.trailer_dehum_grid_mode
+        to: "on"
+      - trigger: state
+        entity_id: input_select.trailer_dehum_mode
+        to:
+          - Auto
+          - Manual On
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ states('input_text.trailer_dehum_mode_before_low_battery') in ['Auto', 'Manual On'] }}
+    actions:
+      - if:
+          - condition: state
+            entity_id: input_select.trailer_dehum_mode
+            state: "Off"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.trailer_dehum_mode
+            data:
+              option: "{{ states('input_text.trailer_dehum_mode_before_low_battery') }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.trailer_dehum_mode_before_low_battery
+        data:
+          value: ""
+
+  # ── Alert: dehumidifier stopped itself ────────────────────────────────────
+  - id: trailer_dehum_problem_alert
+    alias: "Trailer Dehumidifier — Tank Full / Low Temperature Alert"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.trailer_dehumidifier_tank
+        to: "on"
+        id: tank
+      - trigger: state
+        entity_id: binary_sensor.trailer_dehumidifier_low_temperature
+        to: "on"
+        id: cold
+      - trigger: state
+        entity_id: binary_sensor.trailer_dehumidifier_high_temperature
+        to: "on"
+        id: hot
+    conditions:
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: input_select.trailer_dehum_mode
+            state: "Off"
+    actions:
+      - action: notify.send_message
+        target:
+          entity_id: notify.mobile_app_your_phone
+        data:
+          message: >-
+            {% if trigger.id == 'tank' %}Trailer dehumidifier stopped: its tank is full, so the drain hose to the gray-water tank is blocked or kinked. Clear the drain and empty the tank to resume.
+            {% elif trigger.id == 'hot' %}Trailer dehumidifier stopped: too hot to run ({{ states('sensor.trailer_dehumidifier_temperature') }}°F; limit {{ state_attr('sensor.trailer_dehum_defaults', 'max_temp_f') }}°F).
+            {% else %}Trailer dehumidifier stopped: too cold to run ({{ states('sensor.trailer_dehumidifier_temperature') }}°F; limit {{ state_attr('sensor.trailer_dehum_defaults', 'min_temp_f') }}°F).{% endif %}

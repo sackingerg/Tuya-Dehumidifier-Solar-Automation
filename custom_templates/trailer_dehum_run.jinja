@@ -1,0 +1,37 @@
+{#- Dehumidifier run tracking for packages/trailer_dehumidifier.yaml.
+    Called from the trigger-based "Trailer Dehumidifier Drying Rate" sensor's
+    state and attribute templates (where `this` exists) with:
+      prev    this.attributes   (the previous update's values)
+      now_ts  epoch seconds of this update
+      min_minutes  runs shorter than this get no rate and no summary
+                   (run_min_minutes in the package's defaults block)
+    A run is any stretch where humidifier.trailer_dehumidifier is on and reporting
+    humidity. Returns JSON:
+      running, start_ts, start_humidity, minutes, drop (% points removed so
+      far), rate (% per hour, once the run is min_minutes old), last_humidity,
+      last_run (summary of the last finished run of min_minutes or more). -#}
+{% macro trailer_dehum_run(prev, now_ts, min_minutes=10) -%}
+{%- set hum = states('sensor.trailer_dehumidifier_humidity') | float(none) -%}
+{%- set on = is_state('humidifier.trailer_dehumidifier', 'on') and hum is not none -%}
+{%- set ps = prev.get('start_ts') -%}
+{%- set psh = prev.get('start_humidity') -%}
+{%- set plh = prev.get('last_humidity') -%}
+{%- set last_run = prev.get('last_run') -%}
+{%- if on -%}
+  {%- set start = ps if ps is number else now_ts -%}
+  {%- set sh = psh if (ps is number and psh is number) else hum -%}
+  {%- set mins = ((now_ts - start) / 60) | round(1) -%}
+  {%- set drop = (sh - hum) | round(1) -%}
+  {%- set rate = (drop / (mins / 60)) | round(2) if mins >= min_minutes else none -%}
+{%- else -%}
+  {%- set start = none -%}{%- set sh = none -%}{%- set mins = none -%}{%- set drop = none -%}{%- set rate = none -%}
+  {%- if ps is number and psh is number and plh is number and (now_ts - ps) >= min_minutes * 60 -%}
+    {%- set m = ((now_ts - ps) / 60) | round(0) -%}
+    {%- set last_run = {'started': ps | timestamp_custom('%-m/%-d %H:%M'), 'minutes': m,
+        'start_humidity': psh, 'end_humidity': plh, 'drop': (psh - plh) | round(1),
+        'rate': ((psh - plh) / (m / 60)) | round(2)} -%}
+  {%- endif -%}
+{%- endif -%}
+{{ {'running': on, 'start_ts': start, 'start_humidity': sh, 'minutes': mins, 'drop': drop,
+    'rate': rate, 'last_humidity': hum if hum is not none else plh, 'last_run': last_run} | to_json }}
+{%- endmacro %}

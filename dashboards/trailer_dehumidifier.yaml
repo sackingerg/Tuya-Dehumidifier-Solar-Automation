@@ -1,0 +1,403 @@
+# Trailer Dehumidifier dashboard (sections view).
+#
+# Use as a whole YAML-mode dashboard, or copy the single view under `views:`
+# into an existing dashboard's raw configuration editor.
+#
+# Needs: Bubble Card (HACS → Frontend) for the tank-status card. Everything
+# else is a built-in card. Entity IDs follow docs/entity-map.md.
+title: Trailer Dehumidifier
+views:
+- title: Trailer BMS
+  path: trailer-bms
+  icon: mdi:truck-trailer
+  type: sections
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Trailer BMS
+    - type: tile
+      entity: sensor.trailer_bms_battery
+    - type: tile
+      entity: binary_sensor.trailer_bms_charging
+    - type: tile
+      entity: sensor.trailer_bms_current
+    - type: tile
+      entity: sensor.trailer_bms_cycles
+    - type: tile
+      entity: sensor.trailer_bms_power
+    - type: tile
+      entity: sensor.trailer_bms_runtime
+    - type: tile
+      entity: sensor.trailer_bms_stored_energy
+    - type: tile
+      entity: sensor.trailer_bms_temperature
+    - type: tile
+      entity: sensor.trailer_bms_voltage
+    - type: gauge
+      entity: sensor.trailer_solar_charger_battery_current
+      max: 10
+      needle: true
+      unit: amps
+      name:
+        type: device
+  - type: grid
+    cards:
+    - type: heading
+      heading: Dehumidifier
+    - type: tile
+      grid_options:
+        rows: auto
+      visibility:
+      - condition: state
+        entity: sensor.dehumidifier_fan_speed
+        state: High
+      entity: fan.trailer_dehumidifier
+      name: Humidifier On Fan- HI
+      icon: mdi:fan-speed-2
+      color: red
+      show_entity_picture: false
+      hide_state: true
+      vertical: false
+      features_position: bottom
+    - type: tile
+      entity: humidifier.trailer_dehumidifier
+      name: Humidity Level
+      vertical: false
+      features_position: bottom
+    - type: custom:bubble-card
+      card_type: button
+      entity: binary_sensor.trailer_dehumidifier_tank
+      tap_action:
+        action: more-info
+      sub_button:
+        bottom:
+        - name: Controls
+          justify_content: space-between
+          group:
+          - name: State
+            css_class: highlight
+            show_icon: false
+            show_background: false
+            fill_width: false
+            hide_when_parent_unavailable: true
+            state_content: state
+          - name: ' '
+            show_name: true
+            show_icon: false
+            show_background: false
+            fill_width: false
+            tap_action:
+              action: none
+          - name: More info
+            icon: mdi:chevron-right
+            show_background: false
+            state_background: false
+            fill_width: false
+      styles: ".highlight .bubble-sub-button-name-container,\n.highlight .scrolling-container,\n.highlight .scrolling-container span {\n  font-size: var(--bubble-sub-button-highlight-font-size, 20px) !important;\n\
+        \  font-weight: var(--bubble-sub-button-highlight-font-weight, 300) !important;\n  white-space: nowrap !important;\n  overflow: hidden !important;\n}"
+      grid_options:
+        rows: '1.656'
+        columns: 6
+      state_content: last_changed
+      button_type: switch
+      icon: mdi:swim
+      name: Dehumidifier Tank Status
+    - type: tile
+      grid_options:
+        rows: auto
+      visibility:
+      - condition: state
+        entity: sensor.dehumidifier_fan_speed
+        state: 'Off'
+      entity: fan.trailer_dehumidifier
+      name: Humidifier Off
+      icon: mdi:fan-off
+      color: black
+      show_entity_picture: false
+      hide_state: true
+      vertical: false
+      features_position: bottom
+    - type: tile
+      grid_options:
+        rows: auto
+      visibility:
+      - condition: state
+        entity: sensor.dehumidifier_fan_speed
+        state: Low
+      entity: fan.trailer_dehumidifier
+      name: Humidifier On Fan - Low
+      icon: mdi:fan-speed-1
+      color: blue
+      show_entity_picture: false
+      hide_state: false
+      vertical: false
+      features_position: bottom
+  - type: grid
+    cards:
+    - type: heading
+      heading: Dehumidifier Automation
+      icon: mdi:air-humidifier
+    - type: tile
+      entity: input_boolean.trailer_dehum_grid_mode
+      name: Grid Mode (off = EcoFlow solar & batteries)
+      icon: mdi:transmission-tower
+      tap_action:
+        action: toggle
+      icon_tap_action:
+        action: toggle
+      grid_options:
+        columns: full
+    - type: tile
+      grid_options:
+        columns: full
+      entity: input_select.trailer_dehum_mode
+      name: Automation ON/OFF/Auto
+      vertical: false
+      features:
+      - type: select-options
+      features_position: bottom
+    - type: heading
+      heading: Lockouts
+      heading_style: subtitle
+      icon: mdi:lock-alert
+    - type: markdown
+      content: '{%- set ns = namespace(n=0) -%}
+
+        {%- set mode = states(''input_select.trailer_dehum_mode'') -%}
+
+        {%- set grid = is_state(''input_boolean.trailer_dehum_grid_mode'', ''on'') -%}
+
+        {%- set prev = states(''input_text.trailer_dehum_mode_before_low_battery'') -%}
+
+        {%- set t = states(''sensor.trailer_dehumidifier_temperature'') | float(none) -%}
+
+        {%- set t = t if t is not none else state_attr(''sensor.trailer_last_known_humidity'', ''temperature'') | float(none) -%}
+
+        {%- set tf = (t | round(0) | int ~ ''°F'') if t is not none else ''?°F'' -%}
+
+        {%- if mode == ''Off'' and prev in [''Auto'', ''Manual On''] -%}{%- set ns.n = ns.n + 1 %}
+
+        <ha-alert alert-type="error">Trailer battery low ({{ states(''sensor.trailer_bms_battery'') }}%, cutoff {{ states(''input_number.trailer_dehum_trailer_low'') | int }}%). Set the trailer On Grid;
+        it goes back to {{ prev }}.</ha-alert>
+
+        {%- elif mode == ''Off'' -%}{%- set ns.n = ns.n + 1 %}
+
+        <ha-alert alert-type="info">Mode is Off.</ha-alert>
+
+        {%- endif -%}
+
+        {%- if is_state(''input_boolean.trailer_dehum_temp_out_of_range'', ''on'') -%}{%- set ns.n = ns.n + 1 %}
+
+        <ha-alert alert-type="error">Trailer Temp out of range, ({{ tf }}).</ha-alert>
+
+        {%- endif -%}
+
+        {%- if is_state(''binary_sensor.trailer_dehumidifier_tank'', ''on'') -%}{%- set ns.n = ns.n + 1 %}
+
+        <ha-alert alert-type="error">Tank full: the drain hose is blocked, kinked or dislodged. Clear it and empty the tank.</ha-alert>
+
+        {%- endif -%}
+
+        {%- if is_state(''binary_sensor.trailer_dehumidifier_low_temperature'', ''on'') -%}{%- set ns.n = ns.n + 1 %}
+
+        <ha-alert alert-type="error">Dehumidifier stopped itself: too cold ({{ tf }}). It restarts when the trailer warms up.</ha-alert>
+
+        {%- endif -%}
+
+        {%- if is_state(''binary_sensor.trailer_dehumidifier_high_temperature'', ''on'') -%}{%- set ns.n = ns.n + 1 %}
+
+        <ha-alert alert-type="error">Dehumidifier stopped itself: too hot ({{ tf }}). It restarts when the trailer cools down.</ha-alert>
+
+        {%- endif -%}
+
+        {%- if is_state(''binary_sensor.trailer_dehum_offline'', ''on'') -%}{%- set ns.n = ns.n + 1 %}
+
+        <ha-alert alert-type="warning">Dehumidifier did not come online at the last check. The next check retries; check its power and Wi-Fi.</ha-alert>
+
+        {%- endif -%}
+
+        {%- set eh = state_attr(''sensor.trailer_dehum_defaults'', ''window_evening_hour'') -%}
+
+        {%- set h = states(''sensor.trailer_dehumidifier_humidity'') | float(none) -%}
+
+        {%- set h = h if h is not none else states(''sensor.trailer_last_known_humidity'') | float(none) -%}
+
+        {%- set start = states(''input_number.trailer_dehum_start_humidity'') | float(0) -%}
+
+        {%- set waiting = mode == ''Auto'' and is_state(''binary_sensor.trailer_dehum_grid_window'', ''off'') -%}
+
+        {%- set humid_ok = h is not none and h <= start -%}
+
+        {%- if waiting and h is not none and not humid_ok -%}{%- set ns.n = ns.n + 1 %}
+
+        <ha-alert alert-type="warning">Humidity {{ h | round(0) | int }}% is above Start ({{ start | int }}%): runs wait for the low-rate window at {{ eh }}:00.</ha-alert>
+
+        {%- endif -%}
+
+        {%- if ns.n == 0 %}
+
+        <ha-alert alert-type="success" title="No Lockouts Active">{{ ''Humidity within set parameters, system will check at '' ~ eh ~ '':00.'' if waiting and humid_ok else (''No humidity reading yet; the
+        next check will read it.'' if h is none else ''All is well.'') }}</ha-alert>
+
+        {%- endif -%}
+
+        '
+      grid_options:
+        columns: full
+    - type: markdown
+      content: '{% set mode = states(''input_select.trailer_dehum_mode'') %}{% set grid = is_state(''input_boolean.trailer_dehum_grid_mode'',''on'') %}{% set ac = is_state(''switch.ecoflow_delta_3_plus_ac_ports'',''on'')
+        %}{% set running = is_state(''input_boolean.trailer_dehum_running'',''on'') %}{% set win = is_state(''binary_sensor.trailer_dehum_grid_window'',''on'') %}**Mode:** {{ mode }} · **Power:** {{ ''Grid''
+        if grid else ''EcoFlow (solar & batteries)'' }}
+
+
+        {% if mode == ''Off'' and states(''input_text.trailer_dehum_mode_before_low_battery'') in [''Auto'', ''Manual On''] %}🔴 **Trailer battery low — Off.** Plug into house current and turn on Grid Mode;
+        it goes back to {{ states(''input_text.trailer_dehum_mode_before_low_battery'') }}.{% elif mode == ''Off'' %}⚫ Off.{% elif grid %}{% if mode == ''Manual On'' or win %}🔌 Grid — dehumidifier on, humidistat
+        {{ states(''input_number.trailer_dehum_stop_humidity'') | int }}%; off when the low-rate window closes ({% set mh = state_attr(''sensor.trailer_dehum_defaults'', ''window_morning_hour'') | int(7)
+        %}{% set eh = state_attr(''sensor.trailer_dehum_defaults'', ''window_evening_hour'') | int(21) %}{{ (''Monday '' if now().weekday() >= 5 or (now().weekday() == 4 and now().hour >= eh) else '''')
+        ~ mh ~ '':00'' }}).{% else %}🔌 Grid — off until the low-rate window opens ({{ state_attr(''sensor.trailer_dehum_defaults'', ''window_evening_hour'') }}:00 weekdays; all day Sat & Sun).{% endif %}{%
+        elif mode == ''Manual On'' %}🟢 Manual On — EcoFlow AC port {{ ''ON'' if ac else ''OFF'' }}.{% elif running %}🟢 Running on EcoFlow — stops below {{ states(''input_number.trailer_dehum_stop_humidity'')
+        | int }}%.{% elif is_state(''script.trailer_dehum_check'',''on'') %}🔵 Checking the trailer air now…{% else %}{% set last = state_attr(''input_datetime.trailer_dehum_last_check'',''timestamp'') %}{%
+        set nxt = (last + states(''input_number.trailer_dehum_check_hours'') | float(state_attr(''sensor.trailer_dehum_defaults'', ''check_hours'')) * 3600) if last else none %}🟡 EcoFlow — next check {{
+        (nxt | timestamp_custom(''%-I:%M %p'')) if nxt and nxt > now().timestamp() else ''within 15 min'' }}.{% if not win %} Runs wait for the low-rate window ({{ state_attr(''sensor.trailer_dehum_defaults'',''window_evening_hour'')
+        }}:00).{% endif %}{% endif %}
+
+
+        💧 **Last known humidity:** {% set lk = states.sensor.trailer_last_known_humidity %}{% if lk and lk.state not in [''unknown'',''unavailable''] %}**{{ lk.state | float(0) | round(0) | int }}%** at
+        {{ lk.attributes.temperature }}°F — {{ as_datetime(lk.attributes.measured_at) | as_local | as_timestamp | timestamp_custom(''%a %b %-d, %-I:%M %p'') }}{% if is_state(''sensor.trailer_dehumidifier_humidity'',''unavailable'')
+        %} (dehumidifier offline){% endif %}{% else %}—{% endif %}
+
+
+        **Last:** {{ states(''input_text.trailer_dehum_status'') or ''—'' }}
+
+
+        {% if not grid %}EcoFlow **{{ states(''sensor.ecoflow_delta_3_plus_battery_level'') | float(0) | round(0) }}%** · Trailer BMS **{{ states(''sensor.trailer_bms_battery'') }}%**{% endif %}'
+      grid_options:
+        columns: full
+    - type: tile
+      entity: switch.ecoflow_delta_3_plus_ac_ports
+      name: EcoFlow AC Port
+      grid_options:
+        columns: 6
+      visibility:
+      - condition: state
+        entity: input_boolean.trailer_dehum_grid_mode
+        state: 'off'
+    - type: tile
+      entity: sensor.ecoflow_delta_3_plus_battery_level
+      name: EcoFlow Battery
+      grid_options:
+        columns: 6
+      visibility:
+      - condition: state
+        entity: input_boolean.trailer_dehum_grid_mode
+        state: 'off'
+    - type: heading
+      heading: Settings
+      heading_style: subtitle
+    - type: tile
+      entity: input_number.trailer_dehum_start_humidity
+      name: Start at humidity
+      features:
+      - type: numeric-input
+        style: buttons
+      features_position: bottom
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: tile
+      entity: input_number.trailer_dehum_stop_humidity
+      name: Stop at humidity
+      features:
+      - type: numeric-input
+        style: buttons
+      features_position: bottom
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: tile
+      entity: input_number.trailer_dehum_check_hours
+      name: Check every
+      features:
+      - type: numeric-input
+        style: buttons
+      features_position: bottom
+      grid_options:
+        columns: 6
+        rows: 2
+      visibility:
+      - condition: state
+        entity: input_boolean.trailer_dehum_grid_mode
+        state: 'off'
+    - type: tile
+      grid_options:
+        columns: 6
+        rows: 2
+      visibility:
+      - condition: state
+        entity: input_boolean.trailer_dehum_grid_mode
+        state: 'off'
+      entity: input_number.trailer_dehum_trailer_low
+      name: Trailer bat low — cutoff
+      vertical: false
+      features:
+      - type: numeric-input
+        style: buttons
+      features_position: bottom
+    - type: heading
+      heading: Drying progress
+      heading_style: subtitle
+      icon: mdi:water-minus
+    - type: markdown
+      content: '{% set a = states.sensor.trailer_dehumidifier_drying_rate.attributes if states.sensor.trailer_dehumidifier_drying_rate else {} %}{% set lr = a.get(''last_run'') %}{% if a.get(''running'')
+        %}**Current run** — started {{ a.start_ts | timestamp_custom(''%-I:%M %p'') if a.start_ts else ''—'' }}
+
+
+        {{ a.start_humidity }}% → **{{ a.last_humidity }}%** · {{ a.minutes | float(0) | round(0) | int }} min · removed **{{ a.drop }}** points{% if a.get(''drop'', 0) | float(0) > 0 and states(''sensor.trailer_dehumidifier_drying_rate'')
+        not in [''unknown'',''unavailable''] %} · **{{ states(''sensor.trailer_dehumidifier_drying_rate'') }} %/h**{% set left = a.last_humidity | float(0) - states(''input_number.trailer_dehum_stop_humidity'')
+        | float(state_attr(''sensor.trailer_dehum_defaults'', ''stop_humidity'')) %}{% set r = states(''sensor.trailer_dehumidifier_drying_rate'') | float(0) %}{% if left > 0 and r > 0 %}
+
+
+        At this rate, {{ states(''input_number.trailer_dehum_stop_humidity'') | int }}% in about **{{ (left / r * 60) | round(0) | int }} min**{% endif %}{% else %} · rate after {{ state_attr(''sensor.trailer_dehum_defaults'',
+        ''run_min_minutes'') }} min{% endif %}{% else %}**Not running.**{% endif %}
+
+
+        {% if lr %}**Last run** ({{ lr.started }}): {{ lr.start_humidity }}% → {{ lr.end_humidity }}% in {{ lr.minutes | int }} min — **{{ lr.rate }} %/h**{% else %}_No completed run of {{ state_attr(''sensor.trailer_dehum_defaults'',
+        ''run_min_minutes'') }}+ min yet._{% endif %}'
+      grid_options:
+        columns: full
+    - type: history-graph
+      title: Humidity vs time — last 48 h
+      hours_to_show: 48
+      entities:
+      - entity: sensor.trailer_dehumidifier_humidity
+        name: Trailer humidity
+      - entity: humidifier.trailer_dehumidifier
+        name: Dehumidifier
+      grid_options:
+        columns: full
+    - type: history-graph
+      title: Drying rate per run — last 30 days
+      hours_to_show: 720
+      entities:
+      - entity: sensor.trailer_dehumidifier_drying_rate
+        name: Drying rate (%/h)
+      grid_options:
+        columns: full
+  - type: grid
+    cards:
+    - type: markdown
+      title: Dehumidifier Activity Log
+      content: '{% set e = state_attr(''sensor.trailer_dehumidifier_activity_log'', ''entries'') or [] %}{% if e | count == 0 %}*No activity recorded yet.*{% endif %}
+
+        {% for line in e %}
+
+        - {{ line }}
+
+        {% endfor %}'
+  badges: []
+  header:
+    card:
+      type: markdown
+      text_only: true
+      content: Trailer Dehumidifier and Solar Status
