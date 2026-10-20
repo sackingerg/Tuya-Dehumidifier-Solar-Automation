@@ -8,12 +8,13 @@ A Home Assistant package that runs a Wesiop OL09-D031M Wi-Fi dehumidifier in a t
   - **EcoFlow mode:** the dehumidifier is plugged into the EcoFlow AC port and runs on the battery.
   - **Grid mode:** it's plugged into house current.
 - **Battery-friendly sampling** in EcoFlow mode. The dehumidifier's own sensor is the only humidity reading, so the AC port is switched on every few hours. The automation waits for the unit to come online, lets it settle, then keeps it running or turns it off.
-- **Low-rate window:** Auto runs the dehumidifier only on weekday nights (21:00–7:00) and all weekend, in both Grid and EcoFlow mode. Outside it, EcoFlow-mode checks still read the humidity but don't start a run; when the window closes, everything turns off.
+- **Any time of day on EcoFlow:** off grid, the time doesn't matter, and daytime runs get help from solar.
+- **Low-rate window on Grid:** on house current, Auto runs only on weekday nights (21:00–7:00) and all weekend, starting as soon as the window opens in the warmer early evening. When the window closes, everything turns off.
 - **Low trailer battery:** at 20 %, Mode is set to Off and your phone gets *Time to set the trailer "On Grid".* Turning Grid mode on puts Mode back. Nothing is locked.
 - **Temperature lockout:** the unit is kept within the manual's 5–35 °C (41–95 °F) in both modes, with hysteresis so it doesn't flicker on and off. The dashboard shows a red *Trailer Temp out of range* warning while it's set.
 - **Lockouts card:** the dashboard lists every active lockout, or *No Lockouts Active*.
 - **Start humidity is never below Stop humidity:** the two sliders are tied together.
-- **Drying progress** (%/h, time to target), **last known humidity** with a timestamp, and a 40-entry **activity log** that survives restarts.
+- **Last known humidity** with a timestamp, a humidity history graph, and a 40-entry **activity log** that survives restarts.
 - **Phone alerts:**
   - tank full (a blocked drain hose)
   - too cold or too hot
@@ -32,8 +33,6 @@ packages/
   trailer_dehumidifier.yaml          the automation (package)
   optional/
     tuya_local_helpers.yaml          humidity and too-cold/too-hot sensors for Tuya Local
-custom_templates/
-  trailer_dehum_run.jinja            drying-run tracking macro
 dashboards/
   trailer_dehumidifier.yaml          Trailer / Solar dashboard view
 docs/
@@ -65,7 +64,6 @@ docs/
    ```
 2. **Copy the files** into your Home Assistant config folder:
    - `packages/trailer_dehumidifier.yaml` → `/config/packages/`
-   - `custom_templates/trailer_dehum_run.jinja` → `/config/custom_templates/`
    - `packages/optional/tuya_local_helpers.yaml` → `/config/packages/` (see [docs/dehumidifier.md](docs/dehumidifier.md))
 3. **Map your entities.** Replace the external entity IDs with your own, in both the package and the dashboard. The full list is in [docs/entity-map.md](docs/entity-map.md). At minimum change `notify.mobile_app_your_phone`.
 4. **Check and restart.** Go to **Developer tools → YAML → Check configuration**, then restart Home Assistant. The first install adds new helpers, so a reload isn't enough.
@@ -77,7 +75,7 @@ docs/
 
 ## Defaults
 
-Everything below is in the first block of `packages/trailer_dehumidifier.yaml` (`sensor.trailer_dehum_defaults`). The first four are starting values for the dashboard sliders. The rest are fixed constants.
+Everything below is in the first block of `packages/trailer_dehumidifier.yaml` (`sensor.trailer_dehum_defaults`). The first five are starting values for the dashboard sliders. The rest are fixed constants.
 
 | Name | Default | Meaning |
 |---|---|---|
@@ -85,14 +83,13 @@ Everything below is in the first block of `packages/trailer_dehumidifier.yaml` (
 | `stop_humidity` | 40 % | Runs end below this. Also the humidistat target |
 | `check_hours` | 3 h | EcoFlow-mode sampling interval |
 | `trailer_low` | 20 % | Trailer battery level that sets Mode to Off and sends the "On Grid" message |
+| `settle_minutes` | 5 min | How long an EcoFlow check runs the unit before its humidity reading is used |
 | `min_temp_f` / `max_temp_f` | 41 / 95 °F | Operating range from the dehumidifier manual (5–35 °C) |
-| `window_evening_hour` / `window_morning_hour` | 21 / 7 | Weekday low-rate window |
+| `window_evening_hour` / `window_morning_hour` | 21 / 7 | Weekday low-rate window (Grid mode only) |
 | `range_margin_f` | 3 °F | How far back inside the range before it turns on again |
 | `out_of_range_for` / `back_in_range_for` | 00:02:00 / 00:10:00 | Hold times for the temperature lockout |
 | `online_timeout` | 00:10:00 | How long to wait for the dehumidifier to report after power-up |
-| `settle_time` | 00:03:00 | Fan time before a reading counts |
 | `low_battery_for` | 00:05:00 | How long the trailer battery must stay below `trailer_low` before Mode is set to Off |
-| `run_min_minutes` | 10 | Shorter runs get no rate and no summary |
 | `log_length` | 40 | Activity-log entries kept |
 
 After you edit the defaults block, go to **Developer tools → YAML** and reload **Template entities**, **Scripts** and **Automations**. Full descriptions of every variable: [docs/variables.md](docs/variables.md).

@@ -62,7 +62,6 @@ You don't need to replace these. The package creates them:
 - `binary_sensor.trailer_dehum_grid_window`
 - `sensor.trailer_last_known_humidity`
 - `sensor.trailer_dehumidifier_activity_log`
-- `sensor.trailer_dehumidifier_drying_rate`
 - the `script.trailer_dehum_*` scripts and their automations
 
 The three helper entities in `packages/optional/tuya_local_helpers.yaml` are listed in the Tuya Local table above.

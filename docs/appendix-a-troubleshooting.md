@@ -8,7 +8,7 @@ Values are written as their variable name followed by the default in brackets, f
 |---|---|
 | **Lockouts card** (dashboard, under the Mode selector) | Every active lockout, colour-coded. Shows a green **No Lockouts Active** when there are none |
 | **Last** line in the status card (`input_text.trailer_dehum_status`) | The latest decision, with its time |
-| **Dehumidifier Activity Log** (`sensor.trailer_dehumidifier_activity_log`) | The newest `log_length (40)` events: mode and power-source changes, every status line, AC port run times, drying runs, tank and temperature stops |
+| **Dehumidifier Activity Log** (`sensor.trailer_dehumidifier_activity_log`) | The newest `log_length (40)` events: mode and power-source changes, every status line, AC port run times, tank and temperature stops |
 
 Switching between Grid and EcoFlow mode isn't a lockout. Set the **Grid Mode** switch to match where the dehumidifier is plugged in.
 
@@ -22,17 +22,18 @@ Switching between Grid and EcoFlow mode isn't a lockout. Set the **Grid Mode** s
 | 4 | **Tank full** | The unit's float trips. With the drain hose fitted, that means the hose is blocked, kinked or dislodged. The phone gets an alert | Red: clear the drain hose and empty the tank | Clear the hose and empty the tank. The unit resumes; in EcoFlow mode the next check restarts it |
 | 5 | **Unit stopped itself: too cold or too hot** | The dehumidifier's own protection (`fault_code` bits 8 and 16). The phone gets an alert | Red, with the temperature | The unit resumes on its own once the trailer is back in range |
 | 6 | **Did not come online** | No humidity reading within `online_timeout (00:10:00)` after a check turns the AC port on | Amber | Clears at the unit's next real reading. If it repeats, check the unit's power, Wi-Fi and fixed IP address, and Tuya Local |
-| 7 | **Humidity waiting for the low-rate window** | Mode Auto, humidity above the Start setting, on weekdays from `window_morning_hour (7)` to `window_evening_hour (21)`. In Grid mode the unit is off; in EcoFlow mode checks still read the air but don't start a run. With humidity at or below Start this is normal, not a lockout: the card shows green *Humidity within set parameters, system will check at 21:00.* | Amber: humidity, Start setting and the opening time | The window opens at `window_evening_hour (21)` on weekdays and all day on Saturday and Sunday. In EcoFlow mode a check starts as it opens. In Grid mode, Manual On runs the unit until the window next closes |
+| 7 | **Humidity waiting for the low-rate window (Grid mode)** | Grid mode, Mode Auto, humidity above the Start setting, on weekdays from `window_morning_hour (7)` to `window_evening_hour (21)`. The unit is off. With humidity at or below Start this is normal, not a lockout: the card shows green *Humidity within set parameters, system will check at 21:00.* EcoFlow mode isn't affected; it runs at any time of day | Amber: humidity, Start setting and the opening time | The window opens at `window_evening_hour (21)` on weekdays and all day on Saturday and Sunday. Manual On runs the unit until the window next closes |
 
 ## Not lockouts, but it isn't running
 
 | Symptom | Cause | What to do |
 |---|---|---|
 | EcoFlow mode, Auto: nothing happens for a while | A new check starts no sooner than `check_hours (3 h)` after the last one. The status card shows the next check time | Wait, or change Mode to start a check straight away |
+| A check starts a run when the trailer seems dry | Right after power-up the unit's sensor reads damp air trapped inside the unit, 15–25 points high, and it falls for several minutes. If **Settle time before reading** (`settle_minutes (5 min)`) is too short, the check decides on a reading that's still high | Raise the settle time on the dashboard a minute at a time. Lower it if checks run the EcoFlow longer than you'd like |
 | A check runs, then the AC port turns off | Humidity isn't above the Start setting (`start_humidity (45 %)`). The status line says *checked, not needed* | Nothing; it runs when the trailer is humid enough. Lower the Start setting to run sooner |
 | Manual On in EcoFlow mode, but the unit stays off | Manual On only powers the outlet. The unit starts in whatever state it was last left in | Switch the unit on once, from the **Humidity Level** tile or its own panel. It then comes back on by itself each time |
 | Readings blank or *unknown* | With the AC port off, the unit has no power, so its sensors are unavailable | Normal. **Last known humidity** keeps the last real reading and its time |
-| Run stopped before reaching Stop | The low-rate window closed (#7), a lockout set (#3, #4) or Mode changed. The activity log shows which | See the matching lockout above |
+| Run stopped before reaching Stop | In Grid mode the low-rate window closed; otherwise a lockout set (#3, #4) or Mode changed. The activity log shows which | See the matching lockout above |
 
 ## Logs and errors
 

@@ -78,7 +78,7 @@ The **Grid Mode** switch on the dashboard tells the automation where the unit is
 
 | Grid Mode | Plugged into | Behaviour |
 |---|---|---|
-| **Off: EcoFlow mode** | The EcoFlow Delta 3 Plus AC outlet. The trailer's solar-charged battery keeps the EcoFlow charged | The automation switches the EcoFlow AC port on and off. The unit samples the air every few hours, and runs only when needed and only inside the low-rate window (weekday nights, all weekend). At 20 % trailer battery, Mode is set to Off and your phone is told to set the trailer On Grid |
+| **Off: EcoFlow mode** | The EcoFlow Delta 3 Plus AC outlet. The trailer's solar-charged battery keeps the EcoFlow charged | The automation switches the EcoFlow AC port on and off. The unit samples the air every few hours and runs only when needed, at any time of day; daytime runs get help from solar. At 20 % trailer battery, Mode is set to Off and your phone is told to set the trailer On Grid |
 | **On: Grid mode** | House current (shore power) | The unit is always powered. It runs on its own humidistat during the low-rate window (weekday nights, all weekend) |
 
 At about 100–120 W, an hour of running uses roughly 0.1–0.12 kWh from the EcoFlow, plus inverter losses.

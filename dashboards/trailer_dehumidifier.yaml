@@ -225,7 +225,7 @@ views:
 
         {%- set start = states(''input_number.trailer_dehum_start_humidity'') | float(0) -%}
 
-        {%- set waiting = mode == ''Auto'' and is_state(''binary_sensor.trailer_dehum_grid_window'', ''off'') -%}
+        {%- set waiting = grid and mode == ''Auto'' and is_state(''binary_sensor.trailer_dehum_grid_window'', ''off'') -%}
 
         {%- set humid_ok = h is not none and h <= start -%}
 
@@ -259,8 +259,7 @@ views:
         elif mode == ''Manual On'' %}🟢 Manual On — EcoFlow AC port {{ ''ON'' if ac else ''OFF'' }}.{% elif running %}🟢 Running on EcoFlow — stops below {{ states(''input_number.trailer_dehum_stop_humidity'')
         | int }}%.{% elif is_state(''script.trailer_dehum_check'',''on'') %}🔵 Checking the trailer air now…{% else %}{% set last = state_attr(''input_datetime.trailer_dehum_last_check'',''timestamp'') %}{%
         set nxt = (last + states(''input_number.trailer_dehum_check_hours'') | float(state_attr(''sensor.trailer_dehum_defaults'', ''check_hours'')) * 3600) if last else none %}🟡 EcoFlow — next check {{
-        (nxt | timestamp_custom(''%-I:%M %p'')) if nxt and nxt > now().timestamp() else ''within 15 min'' }}.{% if not win %} Runs wait for the low-rate window ({{ state_attr(''sensor.trailer_dehum_defaults'',''window_evening_hour'')
-        }}:00).{% endif %}{% endif %}
+        (nxt | timestamp_custom(''%-I:%M %p'')) if nxt and nxt > now().timestamp() else ''within 15 min'' }}.{% endif %}
 
 
         💧 **Last known humidity:** {% set lk = states.sensor.trailer_last_known_humidity %}{% if lk and lk.state not in [''unknown'',''unavailable''] %}**{{ lk.state | float(0) | round(0) | int }}%** at
@@ -344,28 +343,24 @@ views:
       - type: numeric-input
         style: buttons
       features_position: bottom
-    - type: heading
-      heading: Drying progress
-      heading_style: subtitle
-      icon: mdi:water-minus
-    - type: markdown
-      content: '{% set a = states.sensor.trailer_dehumidifier_drying_rate.attributes if states.sensor.trailer_dehumidifier_drying_rate else {} %}{% set lr = a.get(''last_run'') %}{% if a.get(''running'')
-        %}**Current run** — started {{ a.start_ts | timestamp_custom(''%-I:%M %p'') if a.start_ts else ''—'' }}
-
-
-        {{ a.start_humidity }}% → **{{ a.last_humidity }}%** · {{ a.minutes | float(0) | round(0) | int }} min · removed **{{ a.drop }}** points{% if a.get(''drop'', 0) | float(0) > 0 and states(''sensor.trailer_dehumidifier_drying_rate'')
-        not in [''unknown'',''unavailable''] %} · **{{ states(''sensor.trailer_dehumidifier_drying_rate'') }} %/h**{% set left = a.last_humidity | float(0) - states(''input_number.trailer_dehum_stop_humidity'')
-        | float(state_attr(''sensor.trailer_dehum_defaults'', ''stop_humidity'')) %}{% set r = states(''sensor.trailer_dehumidifier_drying_rate'') | float(0) %}{% if left > 0 and r > 0 %}
-
-
-        At this rate, {{ states(''input_number.trailer_dehum_stop_humidity'') | int }}% in about **{{ (left / r * 60) | round(0) | int }} min**{% endif %}{% else %} · rate after {{ state_attr(''sensor.trailer_dehum_defaults'',
-        ''run_min_minutes'') }} min{% endif %}{% else %}**Not running.**{% endif %}
-
-
-        {% if lr %}**Last run** ({{ lr.started }}): {{ lr.start_humidity }}% → {{ lr.end_humidity }}% in {{ lr.minutes | int }} min — **{{ lr.rate }} %/h**{% else %}_No completed run of {{ state_attr(''sensor.trailer_dehum_defaults'',
-        ''run_min_minutes'') }}+ min yet._{% endif %}'
+    - type: tile
+      entity: input_number.trailer_dehum_settle_minutes
+      name: Settle time before reading
+      features:
+      - type: numeric-input
+        style: buttons
+      features_position: bottom
       grid_options:
-        columns: full
+        columns: 6
+        rows: 2
+      visibility:
+      - condition: state
+        entity: input_boolean.trailer_dehum_grid_mode
+        state: 'off'
+    - type: heading
+      heading: Humidity
+      heading_style: subtitle
+      icon: mdi:water-percent
     - type: history-graph
       title: Humidity vs time — last 48 h
       hours_to_show: 48
@@ -374,14 +369,6 @@ views:
         name: Trailer humidity
       - entity: humidifier.trailer_dehumidifier
         name: Dehumidifier
-      grid_options:
-        columns: full
-    - type: history-graph
-      title: Drying rate per run — last 30 days
-      hours_to_show: 720
-      entities:
-      - entity: sensor.trailer_dehumidifier_drying_rate
-        name: Drying rate (%/h)
       grid_options:
         columns: full
   - type: grid
